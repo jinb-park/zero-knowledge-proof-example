@@ -124,14 +124,14 @@ class PrimeField():
         # (x - x1) * (x - x3) * ... * (x - xn), by dividing the master
         # polynomial back by each x coordinate
         nums = [self.div_polys(root, [-x, 1]) for x in xs]
-        print(nums)
+        #print(nums)
 
         # Generate denominators by evaluating numerator polys at each x
         denoms = [self.eval_poly_at(nums[i], xs[i]) for i in range(len(xs))]
-        print(denoms)
+        #print(denoms)
 
         invdenoms = self.multi_inv(denoms)
-        print(invdenoms)
+        #print(invdenoms)
 
         # Generate output polynomial, which is the sum of the per-value numerator
         # polynomials rescaled to have the right y values
