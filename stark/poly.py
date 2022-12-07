@@ -1,5 +1,7 @@
 # Creates an object that includes convenience operations for numbers
 # and polynomials in some prime field
+import random
+
 class PrimeField():
     def __init__(self, modulus):
         assert pow(2, modulus, modulus) == 2
@@ -16,6 +18,9 @@ class PrimeField():
 
     def exp(self, x, p):
         return pow(x, p, self.modulus)
+
+    def get_random(self):
+        return random.randrange(1, self.modulus - 2)
 
     # Modular inverse using the extended Euclidean algorithm
     def inv(self, a):
