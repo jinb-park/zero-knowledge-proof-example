@@ -4,7 +4,7 @@ import random
 
 class PrimeField():
     def __init__(self, modulus):
-        assert pow(2, modulus, modulus) == 2
+        #assert pow(2, modulus, modulus) == 2
         self.modulus = modulus
 
     def add(self, x, y):

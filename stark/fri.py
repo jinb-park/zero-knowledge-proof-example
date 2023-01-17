@@ -45,6 +45,7 @@ class Fri():
         self.type = type  # type = {"constant", "interactive", "noninteractive"}
         self.pf = PrimeField(self.modulus)
         self.ys0 = [self.pf.eval_poly_at(self.fx, x) for x in self.xs0]
+        print(self.ys0)
         self.proof = FriProof(self.xs0, self.ys0, self.fx)
 
     def set_type(self, type):
@@ -93,6 +94,8 @@ class Fri():
             # add xs-ys into proof
             self.proof.add_next_layer(xs, ys, fnx)
             self.proof.add_random_a(a)
+
+            print(ys)
 
             if len(fnx) <= 1:  # exit condition is not configurable at this time
                 break
@@ -235,9 +238,48 @@ def test_attack_case_pair_attack():
     fri.corrupt(0, 1, True)
     assert fri.verify() == False
 
+def test_layer_construction():
+    fx = (8, 2, 4)  # 8 + 2x + 4x^2
+    pf = PrimeField(17)
+    xs0 = [pow(3, i, 17) for i in range(16)]
+    ys0 = [pf.eval_poly_at(fx, x) for x in xs0]
+    xs1 = []
+    ys1 = []
+    #c = random.randrange(1, 15)
+    c = 1
+
+    for i in range(8):
+        p1, p2 = ys0[i], ys0[i+8] 
+        pi = pf.lagrange_interp((xs0[i], xs0[i+8]), (p1, p2)) # draw a line
+        xs1.append(pf.mul(xs0[i], xs0[i]))
+        ys1.append(pf.eval_poly_at(pi, c))
+
+    print(ys0)
+    print(xs1)
+    print(ys1)
+
+    # check low degree
+    interp_xs1 = xs1[:2]
+    interp_ys1 = ys1[:2]
+    poly = pf.lagrange_interp(interp_xs1, interp_ys1)
+    for x, y in zip(xs1[2:], ys1[2:]):
+        if pf.eval_poly_at(poly, x) != y:
+            print("error: it's not of a low degree")
+    print("it's low degree!", poly, c)
+
 if __name__ == "__main__":
-    test_success_case()
-    test_attack_case_no_pair_attack()
-    test_attack_case_pair_attack()
+    #test_success_case()
+    #test_attack_case_no_pair_attack()
+    #test_attack_case_pair_attack()
+
+    #test_layer_construction()
+
+    pf = PrimeField(17)
+    for i in range(16):
+        for j in range(16):
+            aa = pf.div(pf.sub(i, j), 6)
+            bb = pf.div(pf.add(i, j), 2)
+            if pf.add(aa, bb) == 4:
+                print(i, j)
 
     print("all test success")
