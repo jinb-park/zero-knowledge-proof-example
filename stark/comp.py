@@ -80,12 +80,113 @@ def test_small_p():
 def fibo_rule(pf, a, b, c):
     return pf.sub(pf.add(a, b), c)
 
-def test_small_fib_constraint(p, g, blowup, trace):
+def prove_small_fib_transition_constraint(p, g, blowup, trace):
     # domain set-up
     pf = PrimeField(p)
     n = p - 1
-    d_trace_len = len(trace)
-    d_lde_len = d_trace_len * blowup
+    d_trace_len = len(trace)  # 8
+    d_lde_len = d_trace_len * blowup  # 128
+    max_constraint_degree = 8
+    d_ev_len = d_trace_len * max_constraint_degree
+
+    w_trace = get_root_of_unity(p, g, d_trace_len)
+    w_lde = get_root_of_unity(p, g, d_lde_len)
+    w_ev = get_root_of_unity(p, g, d_ev_len)
+
+    d_trace = get_domains(p, w_trace, d_trace_len)
+    d_lde = get_domains(p, w_lde, d_lde_len)
+    d_ev = get_domains(p, w_ev, d_ev_len)
+
+    # NOTE for constraints
+    # input constraint: (1) t[0]=1 --> t[0]-1=0,  (2) t[1]=2 --> t[1]-2=0
+    # output constraint: t[7]=34 --> t[7]-34=0
+    # transition constraint: t[i]+t[i+1]=t[i+2] --> t[i]+t[i+1]-t[i+2]=0
+
+    # 1. build a trace polynomial, T(x), deg(T) = 3
+    tx = pf.lagrange_interp(d_trace, trace)
+    
+    # 2. lde trace
+    trace_lde = [pf.eval_poly_at(tx, x) for x in d_lde]
+
+    # 3. transition constraint (no adjustment degree now)
+    # P(x) = T(x) + T(x*w_trace) - T(x*w_trace^2) (= 0)
+    # D(x) = (x-w_trace^0)(x-w_trace^1)...(x-w_trace^5) --> denominator
+    # P(x) = C(x) * D(x)
+    # C(x) = P(x) / D(x) --> domain: evaluation domain except ones that evaluate D(x) to 0.
+    input_list = []
+    for i in range(0, len(trace_lde) - 2*blowup, 2):
+        input_list.append((trace_lde[i], trace_lde[i+blowup], trace_lde[i+blowup*2]))
+    px_ev = [pf.sub(pf.add(x[0], x[1]), x[2]) for x in input_list]
+    px = trim_poly(pf.lagrange_interp(d_ev[:len(px_ev)], px_ev))
+
+    # 4. compute dx
+    dx = [1]
+    for i in range(d_trace_len - 2):
+        dx = pf.mul_polys(dx, [-d_trace[i], 1])
+
+    # 5. return trace polynomial, transition constraint polynomial, and denominator
+    return (tx, px, dx)
+
+def verify_small_fib_transition_constraint(p, g, blowup, tx, px, dx):
+    # domain set-up
+    pf = PrimeField(p)
+    n = p - 1
+    d_trace_len = len(tx)  # 8
+    d_lde_len = d_trace_len * blowup  # 128
+    max_constraint_degree = 8
+    d_ev_len = d_trace_len * max_constraint_degree
+
+    w_trace = get_root_of_unity(p, g, d_trace_len)
+    w_lde = get_root_of_unity(p, g, d_lde_len)
+    w_ev = get_root_of_unity(p, g, d_ev_len)
+
+    d_trace = get_domains(p, w_trace, d_trace_len)
+    d_lde = get_domains(p, w_lde, d_lde_len)
+    d_ev = get_domains(p, w_ev, d_ev_len)
+
+    # 1. check consistency between tx and px is correct using out-of-domain point
+    # T(ood_x) + T(ood_x*w_trace) - T(ood_x*w_trace^2) = P(ood_x)
+    # [TODO] ood_x should be randomly chosen or set by fiat-shamir transform
+    ood_x = 254  # out-of-domain x
+    left = pf.sub(pf.add(pf.eval_poly_at(tx, ood_x), pf.eval_poly_at(tx, pf.mul(ood_x, w_trace))), pf.eval_poly_at(tx, pf.mul(ood_x, pf.exp(w_trace, 2))))
+    right = pf.eval_poly_at(px, ood_x)
+    assert left == right
+
+    # NOTE: there are two ways to check constraints are held correctly-
+    # (1) checking if P(x) is zero at all trace indexes --> the most straightforward way, but not efficient, and not probabilistically secure
+    # (2) the bound degree check using FRI --> pick this one!
+    
+    # (1) checking if P(x) is zero at all trace indexes
+    for i in range(d_trace_len - 2):
+        if pf.eval_poly_at(px, d_trace[i]) != 0:
+            print("[verification fail] evaluation check error!")
+    
+    # (2) the bound degree check using FRI
+    # P(x) = T(x) + T(x*w_trace) - T(x*w_trace^2) --> deg(T)=7 such that deg(P)=7
+    # D(x) = (x-w_trace^0)(x-w_trace^1)...(x-w_trace^5) --> deg(D) = 6
+    # C(x) = P(x) / D(x) --> deg(C) = deg(T) - deg(D) = 1
+    # target_bound_degree = 1 --> deg(C) must be equal to or less than 1 if all constraints are held properly.
+    target_bound_degree = len(px) - len(dx)
+    cx_ev = []
+    d_cx = []
+    for x in d_ev:
+        denom = pf.eval_poly_at(dx, x)
+        if denom != 0:
+            cx_ev.append(pf.div(pf.eval_poly_at(px, x), denom))
+            d_cx.append(x)
+    
+    # do the check directly instead of invoking FRI [TODO] call FRI to verify it
+    cx = trim_poly(pf.lagrange_interp(d_cx, cx_ev))
+    assert (len(cx)-1) <= target_bound_degree
+    print("verification success!") 
+
+
+def prove_small_fib_constraint(p, g, blowup, trace):
+    # domain set-up
+    pf = PrimeField(p)
+    n = p - 1
+    d_trace_len = len(trace)  # 8
+    d_lde_len = d_trace_len * blowup  # 128
     max_constraint_degree = 8
     d_ev_len = d_trace_len * max_constraint_degree
 
@@ -133,6 +234,7 @@ def test_small_fib_constraint(p, g, blowup, trace):
     #    t[6]+t[7]-t[8]=0 --> t[8] is out of index--! so, t[6] and t[7] must be excluded-!
     boundary_target_degree = d_ev_len - (d_trace_len - 1)
     transition_target_degree = d_ev_len - 2
+    constraint_target_degree = d_ev_len - d_trace_len  # after denominators divided out
 
     #########################
     # boundary constraint
@@ -140,13 +242,21 @@ def test_small_fib_constraint(p, g, blowup, trace):
     # px1: for constraint t[0]-1=0 (intput constraint)
     stride = (int)(blowup / max_constraint_degree)
     #trace_lde[0] = 2  # --> violating the input constraint. trace_lde[0] == trace[0], this attack holds trace as it but corrupts trace_lde!
-    px1_ev = [pf.sub(x, 1) for x in trace_lde[::2]]  
+    px1_ev = [pf.sub(x, 1) for x in trace_lde[::2]]
     px1 = trim_poly(pf.lagrange_interp(d_ev, px1_ev))
     boundary_adj_degree = boundary_target_degree - len(px1)
     px1_adj = pf.mul_polys(px1, adj_poly(boundary_adj_degree))
     cx1 = pf.add_polys(px1, px1_adj)    # linear combination with constant values (1, 1)
-    cpx1 = pf.div_polys(cx1, [-1, 1])   # denominator: (x-1) where 1 is w_trace_0 (the first x)
+    cpx1 = pf.div_polys(cx1, [-1, 1])   # denominator: (x-1) where 1 is w_trace_0 (the first x)1
     #assert len(cpx1) == (boundary_target_degree - 1)  # check--!
+
+    # low-level check
+    # check: px1 must be divisible by (x-1). no remainder left.
+    # [KEY QUESTION] How to adjust it to the low-degree testing of FRI?
+    px1_ev_low = [pf.sub(x, 1) for x in trace]
+    px1_low = trim_poly(pf.lagrange_interp(d_trace, px1_ev_low))
+    cx1_low = pf.div_polys(px1_low, [-1, 1])
+    print(pf.mul_polys(cx1_low, [-1, 1]) == px1_low)
 
     # px2: for constraint t[7]-34=0 (output constraint)
     #trace_lde[112] = 37  # --> violating the output constraint. trace[7] == trace_lde[7 * blowup(16)]  (7*16=112)
@@ -160,10 +270,12 @@ def test_small_fib_constraint(p, g, blowup, trace):
     # cpx_boundary: the final single boundary constraint polynomial
     cpx_boundary = pf.add_polys(cpx1, cpx2)  # linear combination. [Q] randomness required?
     # -- check-1: degree check
-    assert len(cpx_boundary) == (boundary_target_degree - 1)  
-    # -- check-2: zero-value check ([Q] remainder is not 0? right?)
+    if len(cpx_boundary) != (constraint_target_degree): print("cpx_boundary degree check fail")
+    # -- check-2: zero-value check (remainder check)
     for i in range(len(px1) - 1, len(cpx_boundary) - len(px1) + 1):
-        assert cpx_boundary[i] == 0  
+        if cpx_boundary[i] != 0:
+            print("cpx_boundary value check fail")
+            break
 
     #########################
     # transition constraint
@@ -194,16 +306,188 @@ def test_small_fib_constraint(p, g, blowup, trace):
         tpx_denom = pf.mul_polys(tpx_denom, [-d_trace[i], 1])
     tcx = pf.add_polys(tpx, tpx_adj)
     cpx = pf.div_polys(tcx, tpx_denom)
+    # NOTE: why is cpx of degree 2? --> because in fibonacci example there are three values involved in a transition,
+    #       which means interpolating them would end up of degree 2. --> [Q] right? it's something wrong. revisit here-!
+    #       [REVISIT]
+    # NOTE for max_constraint_degree --> max_constraint_degree=8 means nine values at most can be involved in a transition.
+
+    # (1) symbolic evaluations
+    '''
+    tpx_symbol = [0]
+    tpx_symbol = pf.add_polys(tpx_symbol, tx)
+    tmp_poly = tx.copy()
+    for i in range(1, len(tmp_poly)): tmp_poly[i] = pf.mul(tmp_poly[i], w_trace)
+    tpx_symbol = pf.add_polys(tpx_symbol, tmp_poly)
+    tmp_poly = tx.copy()
+    for i in range(1, len(tmp_poly)): tmp_poly[i] = pf.mul(tmp_poly[i], pf.exp(w_trace, 2))
+    tpx_symbol = pf.sub_polys(tpx_symbol, tmp_poly)
+    tcx_symbol = pf.div_polys(tpx_symbol, tpx_denom)
+
+    bcx_symbol = pf.sub_polys(tx, [1])
+    bcx_symbol2 = pf.div_polys(bcx_symbol, [-1, 1])
+    bcx_ev_low = [pf.mul(pf.eval_poly_at(bcx_symbol2, x), pf.eval_poly_at([-1, 1], x)) for x in d_ev]
+    bcx_low = trim_poly(pf.lagrange_interp(d_ev, bcx_ev_low))
+    print(tx)
+    '''
+
+    # low-level check
+    # check: tpx must be divisible by tpx_denom
+    input_list_low = []
+    for i in range(0, len(trace_lde) - 2*blowup, 2):
+        input_list_low.append((trace_lde[i], trace_lde[i+blowup], trace_lde[i+blowup*2]))
+    tpx_ev_low = [pf.sub(pf.add(x[0], x[1]), x[2]) for x in input_list_low]
+    tpx_low = trim_poly(pf.lagrange_interp(d_ev[:len(tpx_ev_low)], tpx_ev_low))
+    #tpx_low = pf.mul_polys(tpx_low, [0, 0, 0, 0, 0, 0, 0, 0, 1])  # adjustment degree: * x^8
+
+    # consistency check between T(x) and C(x)
+    #ood_i = 71
+    ood_x = 254
+    left_ev = pf.sub(pf.add(pf.eval_poly_at(tx, ood_x), pf.eval_poly_at(tx, pf.mul(ood_x, w_trace))), pf.eval_poly_at(tx, pf.mul(ood_x, pf.exp(w_trace, 2))))
+    right_ev = pf.eval_poly_at(tpx_low, ood_x)
+    #left_ev = pf.sub(pf.add(pf.eval_poly_at(tx, d_lde[ood_i]), pf.eval_poly_at(tx, d_lde[ood_i+blowup])), pf.eval_poly_at(tx, d_lde[ood_i+blowup*2]))
+    #right_ev = pf.eval_poly_at(tpx_low, d_lde[ood_i])
+    print(left_ev == right_ev)
+
+    # method-1: checking if evaluations go zero
+    for i, x in enumerate(tpx_ev_low):
+        if i % 8 == 0 and x != 0: print("evaluation error!")
+
+    # method-2: bound degree check: the final degree must be 1. deg(P) = deg(C) * deg(D), deg(D)=6, deg(P)=7
+    # only 42 points-: how to get it up to 128 points?
+    tcx_ev_low = []
+    tcx_ev_low_d = []
+    for x, y in zip(d_ev[:len(tpx_ev_low)], tpx_ev_low):
+        denom = pf.eval_poly_at(tpx_denom, x)
+        if denom != 0:
+            tcx_ev_low.append(pf.div(y, denom))
+            tcx_ev_low_d.append(x)
+    tcx_ev = trim_poly(pf.lagrange_interp(tcx_ev_low_d, tcx_ev_low))
+    print(len(tcx_ev))
+    #tcx_low = pf.div_polys(tpx_low, tpx_denom)
+
+    # method-3: bound degree check with 128 points (lde domain size)
+    # P'(x) = C(x) - C(ood_x), P'(x) = C'(x) * (x - ood_x), C'(x) = P'(x) / (x - ood_x)
+    cppx_ev = [pf.div( (pf.sub(pf.eval_poly_at(tcx_ev, x), pf.eval_poly_at(tcx_ev, ood_x))), (pf.sub(x, ood_x)) ) for x in d_lde]
+    cppx = trim_poly(pf.lagrange_interp(d_lde, cppx_ev))
+    print(len(cppx_ev))
+    print(len(cppx))
+
+    '''
+    ood_points = []
+    for i in range(256):
+        found = False
+        for x in d_lde:
+            if i == x:
+                found = True
+                break
+        if found == False:
+            ood_points.append(i)
+    print(ood_points)
+    print(len(ood_points))
+    '''
+
+    ##################################
+    # first consistency check: P(x) (trace[2]+trace[3]-trace[4] = 0) = C(x) * D(x)
+    #print(pf.sub(pf.add(pf.eval_poly_at(tx, d_trace[2]), pf.eval_poly_at(tx, d_trace[3])), pf.eval_poly_at(tx, d_trace[4])))
+    #print(pf.mul(pf.eval_poly_at(tcx_low, d_trace[2]), pf.eval_poly_at(tpx_denom, d_trace[2])))
+
+    # second consistency check: P(x) (trace[0]+trace[1]-trace[2] = 0) = C(x) * D(x)
+    #print(pf.sub(pf.add(pf.eval_poly_at(tx, d_trace[0]), pf.eval_poly_at(tx, d_trace[1])), pf.eval_poly_at(tx, d_trace[2])))
+    #print(pf.mul(pf.eval_poly_at(tcx_low, d_trace[0]), pf.eval_poly_at(tpx_denom, d_trace[0])))
+
+    # weakness of existing point check --> If we choose index-0 (not corrupted index-2), it will pass--! if x=0~7, 1/8(d_trace_len) attack possibility..
+    # solution: larger domain and out-of-domain 'x' --> much low attack possibility... 1/(d_trace_len * blowup) == 1/d_lde_len
+    # ood consistency check. as long as "ood_i" is randomly chosen, it will be secure.
+    #ood_i = 71
+    #left_ev = pf.sub(pf.add(pf.eval_poly_at(tx, d_lde[ood_i]), pf.eval_poly_at(tx, d_lde[ood_i+blowup])), pf.eval_poly_at(tx, d_lde[ood_i+blowup*2]))
+    #right_ev = pf.mul(pf.eval_poly_at(tcx_low, d_lde[ood_i]), pf.eval_poly_at(tpx_denom, d_lde[ood_i]))
+    #print(left_ev == right_ev)
+
+    # proof scenario with ood consistency check
+    # (1) [P] send traces (or tx), constraint expressions (P(x)=t(x)+t(x*g)-t(x*g^2)), denom (transition denom)
+    # (2) [V] retrieve constraint evaluations (cx_ev)
+    # (3) [P] P(x) = C(x)*D(x) ==> consistency check evaluations
+    # (4) [V] check consistency (0 at ood index)
+
+    # turn it into a polynomial (for non-interactiveness)
+    # turn it into the condition of the bounded degree
+    # P'(x) = C(x) - C(z),  P'(x) = C'(x) * (x - z), C'(x) = P'(x) / (x - z)
+
+    ####################################
+
 
     cpx_transition = cpx  # because there is no other transition polynomials here-!
-    assert len(cpx_transition) == (transition_target_degree - len(tpx_denom) + 1)  # -- check-1: degree check
-    # -- check-2: value check
+    if len(cpx_transition) != (constraint_target_degree): print("cpx_transition degree check fail")  # -- check-1: degree check
+    # -- check-2: value check (remainder check)
     for i in range(2, len(cpx_transition) - 2):
-        assert cpx_transition[i] == 0
+        if cpx_transition[i] != 0:
+            print("cpx_transition value check fail")
+            break
+
+    # the final composition constraint polynomial (ccx)
+    ccx = pf.add_polys(cpx_boundary, cpx_transition)
 
     ##########################################################################
-    # DEEP FRI: combining trace and constraint polynomials into a single one
+    # DEEP composition polynomial: combining trace and constraint polynomials into a single one
+    # -- [TODO] understand why it is designed this way
+    # -- [TODO**] review https://medium.com/starkware/starkdex-deep-dive-the-stark-core-engine-497942d0f0ab
     ##########################################################################
+    # DEEP composition polynomial, dp(x)
+    # ccx: composition constraint poly
+    # tx: trace poly
+    # The aim is to create a linear combination of ccx and tx.
+    # [Q] How to check security DEEP point offers?
+    #     -- I mean, what attack can end up undetectable if DEEP point method is not used?
+    ood_z = d_lde[d_trace_len + 5] # [TODO] use prng with the seed from the previous step-!
+    ood_zn = pf.mul(ood_z, w_trace)
+    ood_zn2 = pf.mul(ood_zn, w_trace)
+    dcp_target_degree = d_ev_len - d_trace_len - 1  # why? this is equal to deg(composition constraint poly)-1.
+    zv = pf.eval_poly_at(tx, ood_z)
+    znv = pf.eval_poly_at(tx, ood_zn)
+    znv2 = pf.eval_poly_at(tx, ood_zn2) # we need three points as our transition constraint involves in three points.
+
+    # dtx, working domain: d_trace
+    # dtx1's denom: (x - zv)
+    # dtx2's denom: (x - znv)
+    # dtx3's denom: (x - znv2)
+    dtx1_ev = [pf.sub(x, zv) for x in trace]
+    dtx1 = trim_poly(pf.lagrange_interp(d_trace, dtx1_ev))
+    dtx2_ev = [pf.sub(x, znv) for x in trace]
+    dtx2 = trim_poly(pf.lagrange_interp(d_trace, dtx2_ev))
+    dtx3_ev = [pf.sub(x, znv2) for x in trace]
+    dtx3 = trim_poly(pf.lagrange_interp(d_trace, dtx3_ev))
+    dtx1 = pf.div_polys(dtx1, [-zv, 1])
+    dtx2 = pf.div_polys(dtx2, [-znv, 1])
+    dtx3 = pf.div_polys(dtx3, [-znv2, 1])
+
+    dtx = pf.add_polys(dtx1, dtx2)
+    dtx = pf.add_polys(dtx, dtx3)
+    dtx_adj_degree = dcp_target_degree - len(dtx1) + 1
+    dtx_adj = pf.mul_polys(dtx1, adj_poly(dtx_adj_degree))
+    dtx = pf.add_polys(dtx, dtx_adj)
+
+    # dcx
+    zcv = pf.eval_poly_at(ccx, ood_z)
+    dcx = ccx.copy()
+    dcx[0] = pf.sub(dcx[0], zcv)
+    dcx = pf.div_polys(dcx, [-zcv, 1])
+
+    # the final dpx
+    dpx = pf.add_polys(dtx, dcx)
+    dpx_ev = [pf.eval_poly_at(dpx, x) for x in d_lde]
+    assert dcp_target_degree == len(dpx) - 1
+
+    # return a proof object consisting of a variety of data necessary to verify
+    # [TODO] use merkle tree and PRNG
+    # dpx: deep composition polynomial
+    # dpx_ev: evaluations of dpx
+    # trace: trace 
+    return (dpx, dpx_ev, trace)
+
+def verify_small_fib_constraint():
+    # now, inspect all points rather than picking out random points
+    # [Q] at a high level, how does this verify work?
+    pass
 
 if __name__ == "__main__":
     p = 257
@@ -217,6 +501,9 @@ if __name__ == "__main__":
     trace_error_output = [1, 2, 3, 5, 8, 13, 21, 35]  # attack-2: output constraint violation, t[7] = 34 --> 35
     trace_error_transition = [1, 2, 3, 5, 9, 13, 21, 34]  # attack-3: transition constraint violation, t[4] = 8 --> 9
 
-    test_small_fib_constraint(p, g, blowup, trace)
+    #px, px_ev, ptrace = prove_small_fib_constraint(p, g, blowup, trace)
+
+    tx, px, dx = prove_small_fib_transition_constraint(p, g, blowup, trace_error_transition)
+    verify_small_fib_transition_constraint(p, g, blowup, tx, px, dx)
 
     print("all success")
