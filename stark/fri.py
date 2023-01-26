@@ -36,16 +36,20 @@ class FriProof():
             print("xs[" + str(i) + "] ", self.xs_list[i], " // ys[" + str(i) + "] ", self.ys_list[i])
 
 class Fri():
-    def __init__(self, modulus, fx, w, type):
+    def __init__(self, modulus, fx, w, type, xs = None):
         self.modulus = modulus
         self.fx = fx
-        self.n = self.modulus - 1
         self.w = w
-        self.xs0 = [pow(self.w, i, self.modulus) for i in range(self.n)]
+        if xs == None:
+            self.xs0 = [pow(self.w, i, self.modulus) for i in range(self.n)]
+            self.n = self.modulus - 1
+        else:
+            self.xs0 = xs.copy()
+            self.n = len(self.xs0)
         self.type = type  # type = {"constant", "interactive", "noninteractive"}
         self.pf = PrimeField(self.modulus)
         self.ys0 = [self.pf.eval_poly_at(self.fx, x) for x in self.xs0]
-        print(self.ys0)
+        #print(self.ys0)
         self.proof = FriProof(self.xs0, self.ys0, self.fx)
 
     def set_type(self, type):
@@ -204,6 +208,10 @@ def gen_fri_object():
     w = 3              # a primitive n-th root of unity (16-th root of unity)
     xs0 = [pow(w, i, modulus) for i in range(n)]  # first round domain
     fri = Fri(modulus, fx, w, "constant")
+    return fri
+
+def gen_fri_object_with_params(p, fx, w, xs):
+    fri = Fri(p, fx, w, "constant", xs)
     return fri
 
 def test_success_case():

@@ -1,5 +1,7 @@
 import poly
+import fri
 from poly import PrimeField
+from fri import gen_fri_object_with_params, Fri
 import random
 import sys
 
@@ -177,8 +179,17 @@ def verify_small_fib_transition_constraint(p, g, blowup, tx, px, dx):
     
     # do the check directly instead of invoking FRI [TODO] call FRI to verify it
     cx = trim_poly(pf.lagrange_interp(d_cx, cx_ev))
-    assert (len(cx)-1) <= target_bound_degree
-    print("verification success!") 
+    if (len(cx)-1) > target_bound_degree:
+        print("[verification fail] the bounded degree check fail")
+    
+    # FRI verification (just simulating FRI)
+    # [TODO] get the interface of FRI protocol correctly done-!
+    # -- [TODO] fri.prove() invoked by prover, fri.verify() invoked by verifier
+    # -- [TODO] fri computation without the need of feeding fx.
+    fri = gen_fri_object_with_params(p, cx, w_ev, d_ev)
+    fri.prove()
+    fri.verify()
+    # -- end
 
 
 def prove_small_fib_constraint(p, g, blowup, trace):
@@ -503,7 +514,7 @@ if __name__ == "__main__":
 
     #px, px_ev, ptrace = prove_small_fib_constraint(p, g, blowup, trace)
 
-    tx, px, dx = prove_small_fib_transition_constraint(p, g, blowup, trace_error_transition)
+    tx, px, dx = prove_small_fib_transition_constraint(p, g, blowup, trace)
     verify_small_fib_transition_constraint(p, g, blowup, tx, px, dx)
 
     print("all success")
